@@ -10,17 +10,35 @@ import (
 	"golang.org/x/exp/inotify"
 )
 
+var keyExtensions = []string{".go", ".tmpl", ".html", ".js"}
+
 var boldRed = color.New(color.FgRed).Add(color.Bold).SprintFunc()
 
 var ignoredFiles = map[string]struct{}{}
 
-func processEvent(event *inotify.Event) {
-	// Ignore hidden files
-	if filepath.Base(event.Name)[:1] == "." {
-		return
+func triggerRebuild(filename string) bool {
+	ext := filepath.Ext(filename)
+	for _, extension := range keyExtensions {
+		if ext == extension {
+			return true
+		}
 	}
-	if _, ok := ignoredFiles[filepath.Clean(event.Name)]; ok {
-		log.Printf("Ignoring event for %s", event.Name)
+	// Ignore hidden files
+	if filepath.Base(filename)[:1] == "." {
+		log.Printf("Ignoring hidden file %s", filename)
+		return false
+	}
+	if _, ok := ignoredFiles[filepath.Clean(filename)]; ok {
+		log.Printf("Ignoring event for %s", filename)
+		return false
+	}
+
+	return false
+}
+
+func processEvent(event *inotify.Event) {
+
+	if !triggerRebuild(event.Name) {
 		return
 	}
 
