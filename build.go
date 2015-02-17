@@ -17,12 +17,6 @@ var boldRed = color.New(color.FgRed).Add(color.Bold).SprintFunc()
 var ignoredFiles = map[string]struct{}{}
 
 func triggerRebuild(filename string) bool {
-	ext := filepath.Ext(filename)
-	for _, extension := range keyExtensions {
-		if ext == extension {
-			return true
-		}
-	}
 	// Ignore hidden files
 	if filepath.Base(filename)[:1] == "." {
 		log.Printf("Ignoring hidden file %s", filename)
@@ -32,7 +26,12 @@ func triggerRebuild(filename string) bool {
 		log.Printf("Ignoring event for %s", filename)
 		return false
 	}
-
+	ext := filepath.Ext(filename)
+	for _, extension := range keyExtensions {
+		if ext == extension {
+			return true
+		}
+	}
 	return false
 }
 
