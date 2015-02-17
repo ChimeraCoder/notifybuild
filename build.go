@@ -13,12 +13,12 @@ import (
 
 var keyExtensions = []string{".go", ".tmpl", ".html", ".js"}
 
+var cyan = color.New(color.FgCyan).SprintFunc()
 var boldRed = color.New(color.FgRed).Add(color.Bold).SprintFunc()
 
 func triggerRebuild(filename string) bool {
 	// Ignore hidden files
 	if filepath.Base(filename)[:1] == "." {
-		log.Printf("Ignoring hidden file %s", filename)
 		return false
 	}
 	ext := filepath.Ext(filename)
@@ -39,7 +39,7 @@ func processEvent(event *inotify.Event) {
 	switch event.Mask {
 
 	case inotify.IN_MODIFY:
-		log.Printf(boldRed("Modified: %s"), event.Name)
+		log.Printf(cyan("Modified: %s"), event.Name)
 
 		rebuild()
 	}
@@ -105,7 +105,6 @@ func main() {
 	for {
 		select {
 		case ev := <-watcher.Event:
-			log.Println("event:", ev)
 			processEvent(ev)
 		case err := <-watcher.Error:
 			log.Println("error:", err)
