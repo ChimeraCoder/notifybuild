@@ -14,16 +14,10 @@ var keyExtensions = []string{".go", ".tmpl", ".html", ".js"}
 
 var boldRed = color.New(color.FgRed).Add(color.Bold).SprintFunc()
 
-var ignoredFiles = map[string]struct{}{}
-
 func triggerRebuild(filename string) bool {
 	// Ignore hidden files
 	if filepath.Base(filename)[:1] == "." {
 		log.Printf("Ignoring hidden file %s", filename)
-		return false
-	}
-	if _, ok := ignoredFiles[filepath.Clean(filename)]; ok {
-		log.Printf("Ignoring event for %s", filename)
 		return false
 	}
 	ext := filepath.Ext(filename)
@@ -100,13 +94,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	f, err := filepath.Abs(filepath.Dir("."))
-	if err != nil {
-		log.Fatal(err)
-	}
-	binaryName := filepath.Base(f)
-	ignoredFiles[filepath.Clean(binaryName)] = struct{}{}
-	log.Printf("Ignoring binary file %s", filepath.Clean(binaryName))
 
 	for {
 		select {
