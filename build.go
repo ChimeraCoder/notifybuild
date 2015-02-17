@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"fmt"
 	"log"
 	"os/exec"
 	"path/filepath"
@@ -58,7 +59,7 @@ func rebuild() {
 	go func() {
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
-			log.Println(scanner.Text())
+			fmt.Println(scanner.Text())
 		}
 		if err := scanner.Err(); err != nil {
 			log.Println("reading standard input:", err)
@@ -68,7 +69,8 @@ func rebuild() {
 	go func() {
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
-			log.Println(scanner.Text())
+			fmt.Println(boldRed(scanner.Text()))
+
 		}
 		if err := scanner.Err(); err != nil {
 			log.Println("reading standard err:", err)
@@ -80,7 +82,12 @@ func rebuild() {
 	}
 
 	if err := cmd.Wait(); err != nil {
-		log.Fatal(err)
+		switch err.(type) {
+		default:
+			log.Fatal(err)
+		case *exec.ExitError:
+			log.Printf(boldRed("Error with command: %s"), err)
+		}
 	}
 }
 
@@ -89,11 +96,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	err = watcher.Watch(".")
 	if err != nil {
 		log.Fatal(err)
 	}
-
 
 	for {
 		select {
