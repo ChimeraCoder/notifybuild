@@ -72,7 +72,11 @@ func triggerRebuild(filename string) bool {
 	return false
 }
 
-func processEvent(event *inotify.Event, killCmdSig <-chan struct{}) (killed bool) {
+func processEvent(event *inotify.Event, watcher *inotify.Watcher, killCmdSig <-chan struct{}) (killed bool) {
+	// If the watcher is closed, e will be nil
+	if event == nil {
+		return
+	}
 
 	if !triggerRebuild(event.Name) {
 		return
@@ -80,9 +84,9 @@ func processEvent(event *inotify.Event, killCmdSig <-chan struct{}) (killed bool
 
 	switch event.Mask {
 
-	case inotify.IN_MODIFY:
+	case inotify.IN_MODIFY, inotify.IN_CREATE, inotify.IN_CLOSE_WRITE:
+		watcher.Close()
 		cyan("Modified: %s ... rebuilding", event.Name)
-
 		killed = rebuild(killCmdSig)
 	}
 	return
@@ -183,58 +187,56 @@ func init() {
 		triggeredCommands = append(triggeredCommands, cmd)
 	}
 
-
 }
 
 func main() {
 
-    const WatchDir = "."
-
-	watcher, err := inotify.NewWatcher()
-	if err != nil {
-		log.Fatal(err)
-	}
-
+	const WatchDir = "."
+	var watcher *inotify.Watcher
+	var err error
 
 	color.Set(color.FgCyan)
 	dir, _ := filepath.Abs(filepath.Dir("."))
 	log.Printf("Monitoring directory %s", dir)
 	color.Unset()
 
-    // Handle ^C
+	// Handle ^C
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
-    go func(){
-        for _ = range c {
-            // ^C has been sent
+	go func() {
+		for _ = range c {
+			// ^C has been sent
 			boldRed("Sending kill signal")
 			killCmdSig <- struct{}{}
 			boldRed("Sent kill signal")
-        }
-    }()
+		}
+	}()
 
-    for {
-        err = watcher.Watch(WatchDir)
-        if err != nil {
-            log.Fatal(err)
-        }
-        select {
-        case ev := <-watcher.Event:
-            // Remove the watcher while the event is being handled
-            // Otherwise "gofmt -w ." will trigger another event!
-            watcher.RemoveWatch(WatchDir)
-            killed := processEvent(ev, killCmdSig)
-            if killed {
-                return
-            }
-        case err := <-watcher.Error:
-            log.Println("error:", err)
-        case _ = <-killCmdSig:
-            // This will only execute if a kill signal is sent
-            // while no event is being processed
-            boldRed("Received kill signal - no event is currently being processed")
-            return
+	for {
+		watcher, err = inotify.NewWatcher()
+		if err != nil {
+			log.Fatal(err)
+		}
+		err = watcher.Watch(WatchDir)
+		if err != nil {
+			log.Fatal(err)
+		}
+		select {
+		case ev := <-watcher.Event:
+			// Remove the watcher while the event is being handled
+			// Otherwise "gofmt -w ." will trigger another event!
+			killed := processEvent(ev, watcher, killCmdSig)
+			if killed {
+				return
+			}
+		case err := <-watcher.Error:
+			log.Println("error:", err)
+		case _ = <-killCmdSig:
+			// This will only execute if a kill signal is sent
+			// while no event is being processed
+			boldRed("Received kill signal - no event is currently being processed")
+			return
 
-        }
-    }
+		}
+	}
 }
