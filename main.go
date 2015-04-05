@@ -63,7 +63,7 @@ func processEvent(event *inotify.Event, watcher *inotify.Watcher, killCmdSig <-c
 
 func rebuild(killSig <-chan struct{}) (killed bool) {
 	// TODO check if all commands completed successfully
-	var wg sync.WaitGroup
+	wg := &sync.WaitGroup{}
 
 	killSigChans := make([]chan<- struct{}, len(triggeredCommands))
 	for i, cmd := range triggeredCommands {
@@ -95,7 +95,7 @@ func rebuild(killSig <-chan struct{}) (killed bool) {
 	return
 }
 
-func backgroundTask(cmd *exec.Cmd, killed <-chan struct{}, wg sync.WaitGroup) {
+func backgroundTask(cmd *exec.Cmd, killed <-chan struct{}, wg *sync.WaitGroup) {
 	var done chan struct{} = make(chan struct{})
 	defer wg.Done()
 	// Clone the command since it can only be used once
