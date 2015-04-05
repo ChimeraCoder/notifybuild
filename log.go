@@ -1,7 +1,8 @@
 package main
 
-	import "github.com/fatih/color"
-    import "log"
+import "github.com/fatih/color"
+import "log"
+
 //var cyan = color.New(color.FgCyan).SprintFunc()
 //var red = color.New(color.FgRed).Add(color.Bold).SprintFunc()
 //var boldRed = color.New(color.FgRed).Add(color.Bold).SprintFunc()
@@ -35,5 +36,3 @@ func green(format string, args ...interface{}) {
 	log.Printf(format, args...)
 	color.Unset()
 }
-
-

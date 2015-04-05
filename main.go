@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/fatih/color"
 	"golang.org/x/exp/inotify"
-	"gopkg.in/yaml.v2"
 )
 
 var triggeredCommands = []*exec.Cmd{}
@@ -22,44 +20,12 @@ var triggeredCommands = []*exec.Cmd{}
 var keyExtensions = []string{".go", ".tmpl", ".html", ".js"}
 
 // Signal to kill the currently running command (if any)
-var killCmdSig chan struct{} = make(chan struct{})
+// Buffer the channel so sending a kill signal does not block
+// even if there are no commands to read it
+var killCmdSig chan struct{} = make(chan struct{}, 1)
 
 // Signal to kill the entire program
 var killSig chan struct{} = make(chan struct{})
-
-//var cyan = color.New(color.FgCyan).SprintFunc()
-//var red = color.New(color.FgRed).Add(color.Bold).SprintFunc()
-//var boldRed = color.New(color.FgRed).Add(color.Bold).SprintFunc()
-
-func cyan(format string, args ...interface{}) {
-	color.Set(color.FgCyan)
-	log.Printf(format, args...)
-	color.Unset()
-}
-
-func boldCyan(format string, args ...interface{}) {
-	color.Set(color.FgCyan, color.Bold)
-	log.Printf(format, args...)
-	color.Unset()
-}
-
-func boldRed(format string, args ...interface{}) {
-	color.Set(color.FgRed, color.Bold)
-	log.Printf(format, args...)
-	color.Unset()
-}
-
-func red(format string, args ...interface{}) {
-	color.Set(color.FgRed)
-	log.Printf(format, args...)
-	color.Unset()
-}
-
-func green(format string, args ...interface{}) {
-	color.Set(color.FgGreen)
-	log.Printf(format, args...)
-	color.Unset()
-}
 
 func triggerRebuild(filename string) bool {
 	// Ignore hidden files
@@ -101,26 +67,31 @@ func rebuild(killSig <-chan struct{}) (killed bool) {
 
 	killSigChans := make([]chan<- struct{}, len(triggeredCommands))
 	for i, cmd := range triggeredCommands {
-		killCmdSig := make(chan struct{})
+		killCmdSig := make(chan struct{}, 1)
 		killSigChans[i] = killCmdSig
 		wg.Add(1)
 		go backgroundTask(cmd, killCmdSig, wg)
 	}
 
+	allDone := make(chan struct{})
 	go func() {
-		for {
-			select {
-			case <-killSig:
-				wg.Add(1)
-				killed = true
-				for _, ch := range killSigChans {
-					ch <- struct{}{}
-				}
-			}
-		}
+		wg.Wait()
+		allDone <- struct{}{}
 	}()
 
-	wg.Wait()
+	select {
+	case <-allDone:
+		return
+	case <-killSig:
+		red("Received kill signal while processing events - sending to all others")
+		wg.Add(1)
+		killed = true
+		for _, ch := range killSigChans {
+			ch <- struct{}{}
+		}
+		wg.Done()
+	}
+
 	return
 }
 
@@ -186,25 +157,6 @@ func backgroundTask(cmd *exec.Cmd, killed <-chan struct{}, wg sync.WaitGroup) {
 	case <-done:
 		// Finished command
 	}
-}
-
-type Config struct {
-	Tasks map[string]Task
-}
-
-type Task struct {
-	Name   string
-	Cmd    string
-	Nowait bool
-}
-
-func parseConfig() (config Config, err error) {
-	bts, err := ioutil.ReadFile("onchange.yml")
-	if err != nil {
-		return
-	}
-	err = yaml.Unmarshal(bts, &config)
-	return
 }
 
 func main() {
