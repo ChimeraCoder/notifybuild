@@ -3,15 +3,18 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/fatih/color"
 	"golang.org/x/exp/inotify"
+	"gopkg.in/yaml.v2"
 )
 
 var triggeredCommands = []*exec.Cmd{}
@@ -92,101 +95,116 @@ func processEvent(event *inotify.Event, watcher *inotify.Watcher, killCmdSig <-c
 	return
 }
 
-func rebuild(killCmdSig <-chan struct{}) (killed bool) {
-	// Did all commands complete successfully?
+func rebuild(killSig <-chan struct{}) (killed bool) {
+	// TODO check if all commands completed successfully
+	var wg sync.WaitGroup
 
-	var success = true
-	var done chan struct{} = make(chan struct{})
+	killSigChans := make([]chan<- struct{}, len(triggeredCommands))
+	for i, cmd := range triggeredCommands {
+		killCmdSig := make(chan struct{})
+		killSigChans[i] = killCmdSig
+		wg.Add(1)
+		go backgroundTask(cmd, killCmdSig, wg)
+	}
 
-	for _, cmd := range triggeredCommands {
-		// Clone the command since it can only be used once
-		cmd = exec.Command(cmd.Args[0], cmd.Args[1:]...)
-		green("Running %+v", cmd.Args)
-		stdout, err := cmd.StdoutPipe()
-		if err != nil {
-			log.Fatal(err)
-		}
-		stderr, err := cmd.StderrPipe()
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		go func() {
-			scanner := bufio.NewScanner(stdout)
-			for scanner.Scan() {
-				fmt.Println(scanner.Text())
-			}
-			if err := scanner.Err(); err != nil {
-				red("reading standard input:", err)
-			}
-		}()
-
-		go func() {
-			scanner := bufio.NewScanner(stderr)
-			for scanner.Scan() {
-				red(scanner.Text())
-
-			}
-			if err := scanner.Err(); err != nil {
-				red("reading standard err:", err)
-			}
-		}()
-
-		if err := cmd.Start(); err != nil {
-			log.Fatal(err)
-		}
-
-		go func() {
-			if err := cmd.Wait(); err != nil {
-				switch err.(type) {
-				default:
-					log.Fatal((color.New(color.FgRed).SprintFunc())(err))
-				case *exec.ExitError:
-					success = false
-					boldRed("Error with command: %s", err)
+	go func() {
+		for {
+			select {
+			case <-killSig:
+				wg.Add(1)
+				killed = true
+				for _, ch := range killSigChans {
+					ch <- struct{}{}
 				}
-			} else {
-				cyan("Completed: %s", strings.Join(cmd.Args, " "))
 			}
-			done <- struct{}{}
-		}()
-		select {
-		case <-killCmdSig:
-			boldRed("Received kill signal")
-			killed = true
-			cmd.Process.Kill()
-			return
-		case <-done:
-			// Finished command
 		}
-	}
+	}()
 
-	if success {
-		boldCyan("Successful build!")
-	}
+	wg.Wait()
 	return
 }
 
-func init() {
-	args := os.Args
+func backgroundTask(cmd *exec.Cmd, killed <-chan struct{}, wg sync.WaitGroup) {
+	var done chan struct{} = make(chan struct{})
+	defer wg.Done()
+	// Clone the command since it can only be used once
+	cmd = exec.Command(cmd.Args[0], cmd.Args[1:]...)
+	green("Running %+v", cmd.Args)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		log.Fatal(err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	// Default to a single "go build"
-	if len(args) == 1 {
-		triggeredCommands = []*exec.Cmd{exec.Command("go", "build")}
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			fmt.Println(scanner.Text())
+		}
+		if err := scanner.Err(); err != nil {
+			red("reading standard input:", err)
+		}
+	}()
+
+	go func() {
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			red(scanner.Text())
+
+		}
+		if err := scanner.Err(); err != nil {
+			red("reading standard err:", err)
+		}
+	}()
+
+	if err := cmd.Start(); err != nil {
+		log.Fatal(err)
+	}
+
+	go func() {
+		if err := cmd.Wait(); err != nil {
+			switch err.(type) {
+			default:
+				log.Fatal((color.New(color.FgRed).SprintFunc())(err))
+			case *exec.ExitError:
+				boldRed("Error with command: %s", err)
+			}
+		} else {
+			cyan("Completed: %s", strings.Join(cmd.Args, " "))
+		}
+		done <- struct{}{}
+	}()
+
+	select {
+	case <-killed:
+		red("Received kill signal")
+		cmd.Process.Kill()
+		return
+	case <-done:
+		// Finished command
+	}
+}
+
+type Config struct {
+	Tasks map[string]Task
+}
+
+type Task struct {
+	Name   string
+	Cmd    string
+	Nowait bool
+}
+
+func parseConfig() (config Config, err error) {
+	bts, err := ioutil.ReadFile("onchange.yml")
+	if err != nil {
 		return
 	}
-
-	commandStrings := strings.Split(args[1], "&&")
-
-	color.Set(color.FgYellow)
-	log.Printf("Running %d commands: %+v", len(commandStrings), commandStrings)
-	color.Unset()
-	for _, command := range commandStrings {
-		commandArgs := strings.Fields(command)
-		cmd := exec.Command(commandArgs[0], commandArgs[1:]...)
-		triggeredCommands = append(triggeredCommands, cmd)
-	}
-
+	err = yaml.Unmarshal(bts, &config)
+	return
 }
 
 func main() {
@@ -194,6 +212,23 @@ func main() {
 	const WatchDir = "."
 	var watcher *inotify.Watcher
 	var err error
+
+	conf, err := parseConfig()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	color.Set(color.FgYellow)
+	log.Printf("Running %d tasks", len(conf.Tasks))
+	color.Unset()
+	for name, task := range conf.Tasks {
+		cmdArgs := strings.Fields(task.Cmd)
+		cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+		color.Set(color.FgYellow)
+		log.Printf("Registering %s (%s)", name, task.Cmd)
+		color.Unset()
+		triggeredCommands = append(triggeredCommands, cmd)
+	}
 
 	color.Set(color.FgCyan)
 	dir, _ := filepath.Abs(filepath.Dir("."))
@@ -206,9 +241,9 @@ func main() {
 	go func() {
 		for _ = range c {
 			// ^C has been sent
-			boldRed("Sending kill signal")
+			red("Sending kill signal")
 			killCmdSig <- struct{}{}
-			boldRed("Sent kill signal")
+			red("Sent kill signal")
 		}
 	}()
 
@@ -234,7 +269,7 @@ func main() {
 		case _ = <-killCmdSig:
 			// This will only execute if a kill signal is sent
 			// while no event is being processed
-			boldRed("Received kill signal - no event is currently being processed")
+			red("Received kill signal - no event is currently being processed")
 			return
 
 		}
