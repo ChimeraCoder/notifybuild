@@ -159,6 +159,22 @@ func backgroundTask(cmd *exec.Cmd, killed <-chan struct{}, wg *sync.WaitGroup) {
 	}
 }
 
+func NewWatcher(WatchDir string, config Config) (*inotify.Watcher, error) {
+	watcher, err := inotify.NewWatcher()
+	err = watcher.Watch(WatchDir)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, dir := range config.Directories {
+		err = watcher.Watch(dir)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	return watcher, err
+}
+
 func main() {
 
 	const WatchDir = "."
@@ -200,7 +216,7 @@ func main() {
 	}()
 
 	for {
-		watcher, err = inotify.NewWatcher()
+		watcher, err = NewWatcher(WatchDir, conf)
 		if err != nil {
 			log.Fatal(err)
 		}

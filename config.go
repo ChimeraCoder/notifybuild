@@ -7,7 +7,8 @@ import (
 )
 
 type Config struct {
-	Tasks map[string]Task
+	Tasks       map[string]Task
+	Directories []string
 }
 
 type Task struct {
