@@ -17,7 +17,7 @@ import (
 
 var triggeredCommands = []*exec.Cmd{}
 
-var keyExtensions = []string{".go", ".tmpl", ".html", ".js"}
+var keyExtensions = []string{".go", ".tmpl", ".html", ".js", ".jsx"}
 
 // Signal to kill the currently running command (if any)
 // Buffer the channel so sending a kill signal does not block
