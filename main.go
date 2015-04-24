@@ -55,7 +55,7 @@ func processEvent(event *inotify.Event, watcher *inotify.Watcher, killCmdSig <-c
 
 	case inotify.IN_MODIFY, inotify.IN_CREATE, inotify.IN_CLOSE_WRITE:
 		watcher.Close()
-		cyan("Modified: %s ... rebuilding", event.Name)
+		cyan("Modified: %s (rebuilding)", filepath.Base(event.Name))
 		killed = rebuild(killCmdSig)
 	}
 	return
@@ -141,7 +141,7 @@ func backgroundTask(cmd *exec.Cmd, killed <-chan struct{}, wg *sync.WaitGroup) {
 			default:
 				log.Fatal((color.New(color.FgRed).SprintFunc())(err))
 			case *exec.ExitError:
-				boldRed("Error with command: %s", err)
+				boldRed("error with command: %s", err)
 			}
 		} else {
 			cyan("Completed: %s", strings.Join(cmd.Args, " "))
@@ -165,7 +165,11 @@ func NewWatcher(WatchDir string, config Config) (*inotify.Watcher, error) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	for _, dir := range config.Directories {
+	for _, dirName := range config.Directories {
+		dir, err := filepath.Abs(filepath.Dir(dirName))
+		if err != nil {
+			log.Fatal(err)
+		}
 		err = watcher.Watch(dir)
 		if err != nil {
 			log.Fatal(err)
@@ -178,6 +182,7 @@ func NewWatcher(WatchDir string, config Config) (*inotify.Watcher, error) {
 func main() {
 
 	const WatchDir = "."
+
 	var watcher *inotify.Watcher
 	var err error
 
@@ -198,10 +203,15 @@ func main() {
 		triggeredCommands = append(triggeredCommands, cmd)
 	}
 
-	color.Set(color.FgCyan)
-	dir, _ := filepath.Abs(filepath.Dir("."))
-	log.Printf("Monitoring directory %s", dir)
-	color.Unset()
+	for _, dirName := range conf.Directories {
+		dir, err := filepath.Abs(filepath.Dir(dirName))
+		if err != nil {
+			log.Fatal(err)
+		}
+		color.Set(color.FgCyan)
+		log.Printf("Monitoring directory %s", dir)
+		color.Unset()
+	}
 
 	// Handle ^C
 	c := make(chan os.Signal, 1)
